@@ -1,0 +1,9 @@
+*.wgt
+*.wgt.signature
+.sign/
+.tproject.bak
+.package
+.manifest.tmp
+Thumbs.db
+.DS_Store
+*.log
