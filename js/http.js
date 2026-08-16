@@ -1,5 +1,21 @@
 var Http = (function () {
+    function isPreview() {
+        try {
+            var h = window.location.hostname;
+            return h === "127.0.0.1" || h === "localhost";
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function wrap(url) {
+        if (!url || !isPreview()) return url;
+        if (url.charAt(0) === "/" || url.indexOf(window.location.origin) === 0) return url;
+        return "/proxy?u=" + encodeURIComponent(url);
+    }
+
     function request(url, timeoutMs) {
+        url = wrap(url);
         return new Promise(function (resolve, reject) {
             var xhr = new XMLHttpRequest();
             xhr.open("GET", url, true);
@@ -21,5 +37,5 @@ var Http = (function () {
         });
     }
 
-    return { request: request, json: json };
+    return { request: request, json: json, wrap: wrap, isPreview: isPreview };
 })();

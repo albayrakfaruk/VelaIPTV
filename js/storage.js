@@ -27,6 +27,8 @@ var Store = (function () {
         return {
             cacheHours: CONFIG.DEFAULT_CACHE_HOURS,
             subtitleSize: "medium",
+            aspectMode: "fit",
+            playSpeed: 1,
             lastTab: "live"
         };
     }

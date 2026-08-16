@@ -23,6 +23,7 @@ var Keys = (function () {
         INFO: 457,
         EXIT: 10182,
         GUIDE: 458,
+        CAPTION: 10221,
         N0: 48, N1: 49, N2: 50, N3: 51, N4: 52,
         N5: 53, N6: 54, N7: 55, N8: 56, N9: 57
     };
@@ -64,6 +65,7 @@ var Keys = (function () {
         if (k === CODE.YELLOW) return "yellow";
         if (k === CODE.BLUE) return "blue";
         if (k === CODE.INFO) return "info";
+        if (k === CODE.CAPTION) return "caption";
         if (k === CODE.EXIT) return "exit";
         if (k >= CODE.N0 && k <= CODE.N9) return "num" + (k - CODE.N0);
         return "";
