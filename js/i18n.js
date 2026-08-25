@@ -17,15 +17,20 @@ var I18N = (function () {
             later: "Continue on this device",
             setupTitle: "Add your provider",
             setupBody: "VELA plays your own legal M3U playlist or Xtream Codes account. It does not provide media.",
+            loginHead: "Sign in",
+            loginKicker: "Account",
             xtream: "Xtream Codes",
             xtreamHint: "Server, username, password",
-            m3u: "M3U playlist",
+            m3u: "M3U URL",
             m3uHint: "Playlist URL from your provider",
             server: "SERVER URL",
             username: "USERNAME",
             password: "PASSWORD",
-            playlist: "PLAYLIST URL",
-            epg: "EPG URL (optional)",
+            playlist: "URL",
+            serverPh: "http://example.com:8080",
+            usernamePh: "username",
+            passwordPh: "password",
+            playlistPh: "http://example.com/playlist.m3u",
             connect: "Connect",
             back: "Back",
             connecting: "Connecting…",
@@ -147,15 +152,20 @@ var I18N = (function () {
             later: "Bu cihazda devam et",
             setupTitle: "Sağlayıcını ekle",
             setupBody: "VELA kendi yasal M3U listenizi veya Xtream Codes hesabınızı oynatır. Medya sağlamaz.",
+            loginHead: "Giriş yap",
+            loginKicker: "Hesap",
             xtream: "Xtream Codes",
             xtreamHint: "Sunucu, kullanıcı adı, parola",
-            m3u: "M3U listesi",
+            m3u: "M3U URL",
             m3uHint: "Sağlayıcınızın oynatma listesi adresi",
             server: "SUNUCU ADRESİ",
             username: "KULLANICI ADI",
             password: "PAROLA",
-            playlist: "LİSTE ADRESİ",
-            epg: "EPG ADRESİ (isteğe bağlı)",
+            playlist: "URL",
+            serverPh: "http://ornek.com:8080",
+            usernamePh: "kullanıcı adı",
+            passwordPh: "parola",
+            playlistPh: "http://ornek.com/liste.m3u",
             connect: "Bağlan",
             back: "Geri",
             connecting: "Bağlanıyor…",
@@ -263,6 +273,10 @@ var I18N = (function () {
     };
 
     var lang = (navigator.language || "en").toLowerCase().indexOf("tr") === 0 ? "tr" : "en";
+    try {
+        if (/(?:^|[?&])lang=tr(?:&|$)/.test(location.search)) lang = "tr";
+        if (/(?:^|[?&])lang=en(?:&|$)/.test(location.search)) lang = "en";
+    } catch (e) {}
 
     function t(key) {
         return (dict[lang] && dict[lang][key]) || dict.en[key] || key;

@@ -88,10 +88,42 @@ var App = (function () {
 
     function mark(compact) {
         return '<div class="mark">' +
-            '<div class="mark-v">V</div>' +
+            '<img class="mark-v" src="icon.png?v=3" alt=""/>' +
             '<div><div class="mark-name">VELA</div>' +
             (compact ? "" : '<div class="mark-sub">IPTV PLAYER</div>') +
             "</div></div>";
+    }
+
+    function loginBrandHtml() {
+        return '<div class="login-brand">' +
+            '<img class="login-v" src="icon.png?v=3" alt="VELA"/>' +
+            '<div class="login-name">VELA</div>' +
+            '<div class="login-sub">IPTV PLAYER</div>' +
+            "</div>";
+    }
+
+    function loginModesHtml(focusModes) {
+        return '<div class="login-modes">' +
+            '<div class="login-mode' + (setupType === "xtream" ? " active" : "") +
+                (focusModes && setupChoice === 0 ? " focused" : "") +
+                '" data-mode="xtream">' + esc(t("xtream")) + "</div>" +
+            '<div class="login-mode' + (setupType === "m3u" ? " active" : "") +
+                (focusModes && setupChoice === 1 ? " focused" : "") +
+                '" data-mode="m3u">' + esc(t("m3u")) + "</div></div>";
+    }
+
+    function loginShell(inner) {
+        return '<div class="login">' + loginBrandHtml() +
+            '<div class="login-side"><div class="login-card">' + inner +
+            "</div></div></div>";
+    }
+
+    function forceGatePreview() {
+        try {
+            return Http.isPreview() && /(?:^|[?&])(?:gate=1|screen=setup)(?:&|$)/.test(location.search);
+        } catch (e) {
+            return false;
+        }
     }
 
     function show(id, on) {
@@ -285,58 +317,54 @@ var App = (function () {
         show("detail-screen", false);
         show("player-ui", false);
         if (screen === "splash") {
-            gate.className = "screen bg-dim splash";
-            gate.innerHTML = mark(false) +
-                '<div class="tagline">' + esc(t("tagline")) + "</div>" +
-                '<div class="splash-status">' + esc(statusMsg || t("loading")) + "</div>";
+            gate.className = "screen bg-dim login-screen";
+            gate.innerHTML = '<div class="login">' + loginBrandHtml() +
+                '<div class="login-side"><div class="login-card login-wait">' +
+                '<div class="p-spin"></div>' +
+                '<div class="splash-status">' + esc(statusMsg || t("loading")) + "</div></div></div></div>";
             return;
         }
         if (screen === "paywall") {
             var btns = [t("subscribe"), t("restore"), t("later")];
-            var html = '<div class="panel-wrap"><div class="panel">' + mark(true) +
-                "<h1>" + esc(t("subscribeTitle")) + "</h1><p>" + esc(t("subscribeBody")) + "</p><div class=\"form-actions\">";
+            var acts = ["subscribe", "restore", "later"];
+            var html = '<div class="login-kicker">' + esc(t("loginKicker")) + "</div>" +
+                "<h1>" + esc(t("subscribeTitle")) + "</h1><p>" + esc(t("subscribeBody")) +
+                '</p><div class="form-actions">';
             for (var i = 0; i < btns.length; i++) {
                 html += '<button class="btn ' + (i === 0 ? "primary " : "") + "focusable" +
-                    (i === payFocus ? " focused" : "") + '">' + esc(btns[i]) + "</button>";
+                    (i === payFocus ? " focused" : "") + '" data-act="' + acts[i] + '">' +
+                    esc(btns[i]) + "</button>";
             }
-            html += "</div></div></div>";
-            gate.className = "screen bg-dim";
-            gate.innerHTML = html;
-            return;
-        }
-        if (screen === "setup") {
-            gate.className = "screen bg-dim";
-            gate.innerHTML = '<div class="panel-wrap"><div class="panel">' + mark(true) +
-                "<h1>" + esc(t("setupTitle")) + "</h1><p>" + esc(t("setupBody")) + '</p><div class="choice-row">' +
-                '<div class="choice focusable' + (setupChoice === 0 ? " focused" : "") + '"><b>' + esc(t("xtream")) +
-                "</b><span>" + esc(t("xtreamHint")) + "</span></div>" +
-                '<div class="choice focusable' + (setupChoice === 1 ? " focused" : "") + '"><b>' + esc(t("m3u")) +
-                "</b><span>" + esc(t("m3uHint")) + "</span></div></div></div></div>";
+            html += "</div>";
+            gate.className = "screen bg-dim login-screen";
+            gate.innerHTML = loginShell(html);
             return;
         }
         var fields = setupType === "xtream"
             ? [
-                { key: "server", label: t("server"), value: form.server },
-                { key: "username", label: t("username"), value: form.username },
-                { key: "password", label: t("password"), value: form.password, pass: true }
+                { key: "server", label: t("server"), value: form.server, hint: t("serverPh") },
+                { key: "username", label: t("username"), value: form.username, hint: t("usernamePh") },
+                { key: "password", label: t("password"), value: form.password, pass: true, hint: t("passwordPh") }
             ]
             : [
-                { key: "playlist", label: t("playlist"), value: form.playlist },
-                { key: "epg", label: t("epg"), value: form.epg }
+                { key: "playlist", label: t("playlist"), value: form.playlist, hint: t("playlistPh") }
             ];
-        var html = '<div class="panel-wrap"><div class="panel">' + mark(true) +
-            "<h1>" + esc(setupType === "xtream" ? t("xtream") : t("m3u")) + "</h1>";
+        var focusModes = screen === "setup";
+        if (!focusModes && formFocus > fields.length) formFocus = fields.length;
+        var html = "<h1>" + esc(t("loginHead")) + "</h1>" + loginModesHtml(focusModes);
         for (var f = 0; f < fields.length; f++) {
             html += '<div class="field"><label>' + esc(fields[f].label) + "</label>" +
-                '<input class="focusable' + (formFocus === f ? " focused" : "") + '" data-k="' + fields[f].key +
-                '" value="' + esc(fields[f].value) + '"' + (fields[f].pass ? ' type="password"' : ' type="text"') + "/></div>";
+                '<input class="focusable' + (!focusModes && formFocus === f ? " focused" : "") +
+                '" data-k="' + fields[f].key + '" value="' + esc(fields[f].value) + '"' +
+                (fields[f].hint ? ' placeholder="' + esc(fields[f].hint) + '"' : "") +
+                (fields[f].pass ? ' type="password"' : ' type="text"') + "/></div>";
         }
         html += '<div class="error">' + esc(errorMsg) + "</div><div class=\"form-actions\">" +
-            '<button class="btn ghost focusable' + (formFocus === fields.length ? " focused" : "") + '">' + esc(t("back")) + "</button>" +
-            '<button class="btn primary focusable' + (formFocus === fields.length + 1 ? " focused" : "") + '">' +
-            esc(statusMsg || t("connect")) + "</button></div></div></div>";
-        gate.className = "screen bg-dim";
-        gate.innerHTML = html;
+            '<button class="btn primary focusable' +
+            (!focusModes && formFocus === fields.length ? " focused" : "") +
+            '" data-act="connect">' + esc(statusMsg || t("connect")) + "</button></div>";
+        gate.className = "screen bg-dim login-screen";
+        gate.innerHTML = loginShell(html);
         var focused = gate.querySelector(".focused");
         if (focused && focused.tagName === "INPUT") {
             focused.focus();
@@ -2032,7 +2060,7 @@ var App = (function () {
     }
 
     function formFieldCount() {
-        return setupType === "xtream" ? 3 : 2;
+        return setupType === "xtream" ? 3 : 1;
     }
 
     function readInputs() {
@@ -2045,10 +2073,23 @@ var App = (function () {
     function submitForm() {
         readInputs();
         errorMsg = "";
-        var payload = setupType === "xtream"
-            ? { type: "xtream", server: form.server, username: form.username, password: form.password }
-            : { type: "m3u", playlist: form.playlist, epg: form.epg };
-        connectProvider(payload);
+        if (setupType === "xtream") {
+            if (!(form.server || "").trim() || !(form.username || "").trim() || !form.password) {
+                errorMsg = t("badLogin");
+                screen = "form";
+                paintGate();
+                return;
+            }
+            connectProvider({ type: "xtream", server: form.server, username: form.username, password: form.password });
+            return;
+        }
+        if (!(form.playlist || "").trim()) {
+            errorMsg = t("badPlaylist");
+            screen = "form";
+            paintGate();
+            return;
+        }
+        connectProvider({ type: "m3u", playlist: form.playlist });
     }
 
     function jumpToNum(n) {
@@ -2652,9 +2693,15 @@ var App = (function () {
         }
 
         if (screen === "setup") {
-            if (k === "left") setupChoice = 0;
-            if (k === "right") setupChoice = 1;
-            if (k === "enter") {
+            if (k === "left") {
+                setupChoice = 0;
+                setupType = "xtream";
+            }
+            if (k === "right") {
+                setupChoice = 1;
+                setupType = "m3u";
+            }
+            if (k === "enter" || k === "down") {
                 setupType = setupChoice === 0 ? "xtream" : "m3u";
                 formFocus = 0;
                 screen = "form";
@@ -2665,16 +2712,16 @@ var App = (function () {
         }
 
         if (screen === "form") {
-            var n = formFieldCount() + 2;
-            if (k === "up") formFocus = Math.max(0, formFocus - 1);
-            if (k === "down") formFocus = Math.min(n - 1, formFocus + 1);
-            if (k === "left" && formFocus >= formFieldCount()) formFocus = formFieldCount();
-            if (k === "right" && formFocus >= formFieldCount()) formFocus = formFieldCount() + 1;
-            if (k === "enter") {
-                if (formFocus === formFieldCount()) {
+            var n = formFieldCount() + 1;
+            if (k === "up") {
+                if (formFocus === 0) {
                     screen = "setup";
-                    errorMsg = "";
-                } else if (formFocus === formFieldCount() + 1) submitForm();
+                    setupChoice = setupType === "m3u" ? 1 : 0;
+                } else formFocus = Math.max(0, formFocus - 1);
+            }
+            if (k === "down") formFocus = Math.min(n - 1, formFocus + 1);
+            if (k === "enter") {
+                if (formFocus === formFieldCount()) submitForm();
                 else {
                     var inp = root.querySelector(".focused");
                     if (inp && inp.focus) inp.focus();
@@ -2686,6 +2733,7 @@ var App = (function () {
                 } else {
                     screen = "setup";
                     errorMsg = "";
+                    setupChoice = setupType === "m3u" ? 1 : 0;
                 }
             }
             paintGate();
@@ -2719,18 +2767,33 @@ var App = (function () {
 
     function afterSetupGate() {
         fillDefaultForm();
+        if (forceGatePreview()) {
+            screen = "setup";
+            statusMsg = "";
+            errorMsg = "";
+            paintGate();
+            return;
+        }
+        var d = Provider.defaultForm();
+        if (d && d.server && d.username && d.password) {
+            screen = "splash";
+            statusMsg = t("loadingTv");
+            paintGate();
+            connectProvider(d);
+            return;
+        }
         if (Store.provider()) {
             screen = "splash";
             statusMsg = t("loadingTv");
             paintGate();
             loadCachedCatalog();
             if (catalog.liveReady) goHome(true);
-        } else {
-            screen = "splash";
-            statusMsg = t("loadingTv");
-            paintGate();
-            connectProvider(Provider.defaultForm());
+            return;
         }
+        screen = "setup";
+        statusMsg = "";
+        errorMsg = "";
+        paintGate();
     }
 
     function exitApp() {
@@ -2767,6 +2830,53 @@ var App = (function () {
         apply();
     }
 
+    function handleGateClick(e) {
+        var n = e.target;
+        while (n && n !== document.body) {
+            var mode = n.getAttribute && n.getAttribute("data-mode");
+            if (mode) {
+                setupType = mode;
+                setupChoice = mode === "m3u" ? 1 : 0;
+                formFocus = 0;
+                errorMsg = "";
+                screen = "form";
+                paintGate();
+                return;
+            }
+            var act = n.getAttribute && n.getAttribute("data-act");
+            if (act === "connect") {
+                screen = "form";
+                submitForm();
+                return;
+            }
+            if (act === "subscribe") {
+                Billing.buy().then(afterBilling);
+                return;
+            }
+            if (act === "restore") {
+                Billing.check().then(afterBilling);
+                return;
+            }
+            if (act === "later") {
+                afterSetupGate();
+                return;
+            }
+            if (n.tagName === "INPUT") {
+                screen = "form";
+                var inputs = root.querySelectorAll("input[data-k]");
+                for (var i = 0; i < inputs.length; i++) {
+                    if (inputs[i] === n) formFocus = i;
+                }
+                var prev = root.querySelectorAll(".focused");
+                for (var p = 0; p < prev.length; p++) remClass(prev[p], "focused");
+                addClass(n, "focused");
+                n.focus();
+                return;
+            }
+            n = n.parentNode;
+        }
+    }
+
     function boot() {
         root = $("app") || document.getElementById("app");
         mount();
@@ -2774,6 +2884,10 @@ var App = (function () {
         Player.init();
         Keys.register();
         document.addEventListener("keydown", onKey, true);
+        document.addEventListener("input", function (e) {
+            var key = e.target && e.target.getAttribute && e.target.getAttribute("data-k");
+            if (key && form) form[key] = e.target.value;
+        }, true);
         document.addEventListener("click", function (e) {
             if (!Http.isPreview()) return;
             if (screen === "player") {
@@ -2807,6 +2921,10 @@ var App = (function () {
                     return;
                 }
                 bumpOsd();
+                return;
+            }
+            if (screen === "setup" || screen === "form" || screen === "paywall") {
+                handleGateClick(e);
                 return;
             }
             var n = e.target;

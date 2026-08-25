@@ -278,6 +278,18 @@ var Player = (function () {
         return "";
     }
 
+    function isChannelLabel(s) {
+        s = String(s || "").replace(/^\s+|\s+$/g, "");
+        if (!s) return true;
+        return /^(?:[0-9]+\.[0-9]|5\.1|7\.1|2\.0|stereo|mono|surround)$/i.test(s);
+    }
+
+    function stripChannelFromName(s) {
+        return String(s || "")
+            .replace(/\s*[\(\[]?\s*(?:5\.1|7\.1|2\.0|stereo|mono|surround)\s*[\)\]]?\s*$/i, "")
+            .replace(/^\s+|\s+$/g, "");
+    }
+
     function cleanTrackName(s) {
         return String(s || "")
             .replace(/\s*\|?\s*https?:\/\/\S+/ig, "")
@@ -556,7 +568,8 @@ var Player = (function () {
     function trackTitle(rec, fallback, i) {
         if (!rec) return fallback;
         var info = rec.info || parseExtra(rec.extra);
-        if (info.label && String(info.label).length > 1 && !/^[0-9]+$/.test(info.label)) return info.label;
+        var lab = stripChannelFromName(cleanTrackName(info.label));
+        if (lab && lab.length > 1 && !/^[0-9]+$/.test(lab) && !isChannelLabel(lab)) return lab;
         var name = langName(langCode(info, rec.extra));
         if (name) return name;
         return fallback + " " + (i + 1);
@@ -649,12 +662,7 @@ var Player = (function () {
         if (!audioTracks.length) return { available: false, label: I18N.t("audioDefault") };
         var rec = audioTracks[audioIndex];
         var name = trackTitle(rec, I18N.t("audio"), audioIndex);
-        var extra = [];
-        if (rec.info && rec.info.codec) extra.push(rec.info.codec);
-        var ch = channelTag(rec.info || {});
-        if (ch) extra.push(ch);
-        if (audioTracks.length > 1) extra.unshift((audioIndex + 1) + "/" + audioTracks.length);
-        if (extra.length) name += " · " + extra.join(" · ");
+        if (audioTracks.length > 1) name += " · " + (audioIndex + 1) + "/" + audioTracks.length;
         return { available: true, label: name };
     }
 

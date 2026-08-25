@@ -58,5 +58,5 @@ if [ -f "$CERT_DIR/device-profile.xml" ]; then
 fi
 "$SDB" push "$STAGING/VelaIPTV.wgt" /home/owner/share/tmp/sdk_tools/VelaIPTV.wgt
 "$SDB" shell 0 vd_appinstall "$PKG_ID" /home/owner/share/tmp/sdk_tools/VelaIPTV.wgt
-"$SDB" shell 0 launch "$APP_ID" || "$SDB" shell 0 was_execute "$APP_ID"
+"$SDB" shell 0 was_execute "$APP_ID" || "$SDB" shell 0 launch "$APP_ID"
 echo "Kuruldu ve açıldı."

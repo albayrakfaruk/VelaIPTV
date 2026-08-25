@@ -1,6 +1,6 @@
 var CONFIG = {
     APP_NAME: "VELA IPTV PLAYER",
-    APP_VERSION: "1.1.0",
+    APP_VERSION: "1.1.1",
     SUPPORT_URL: "https://github.com/albayrakfaruk/Vela-support",
     PRIVACY_URL: "https://github.com/albayrakfaruk/Vela-support/blob/main/privacy-en.html",
     PACKAGE_ID: "VelaIPTVtv.VelaIPTV",
