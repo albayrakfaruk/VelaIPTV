@@ -39,7 +39,10 @@ var Store = (function () {
         clearProvider: function () {
             remove("provider");
             remove("catalog");
+            remove("catPrefs");
         },
+        catPrefs: function () { return get("catPrefs", {}); },
+        setCatPrefs: function (v) { set("catPrefs", v || {}); },
         catalog: function () { return get("catalog", null); },
         setCatalog: function (v) { set("catalog", v); },
         favorites: function () { return get("favorites", []); },

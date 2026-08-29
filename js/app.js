@@ -36,6 +36,10 @@ var App = (function () {
     var seasonIndex = 0;
     var epIndex = 0;
     var settingsIndex = 0;
+    var lastContentTab = "live";
+    var catEditKind = "live";
+    var catEditIndex = 0;
+    var catEditFocus = "list";
     var payFocus = 0;
     var setupChoice = 0;
     var itemsCache = null;
@@ -121,6 +125,14 @@ var App = (function () {
     function forceGatePreview() {
         try {
             return Http.isPreview() && /(?:^|[?&])(?:gate=1|screen=setup)(?:&|$)/.test(location.search);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function forceCatEditPreview() {
+        try {
+            return Http.isPreview() && /(?:^|[?&])catedit=1(?:&|$)/.test(location.search);
         } catch (e) {
             return false;
         }
@@ -215,11 +227,70 @@ var App = (function () {
         return null;
     }
 
+    function rawCatsFor(kind) {
+        if (kind === "live") return catalog.liveCats || [];
+        if (kind === "movies") return catalog.vodCats || [];
+        if (kind === "series") return catalog.seriesCats || [];
+        return [];
+    }
+
+    function catKindPrefs(kind) {
+        var all = Store.catPrefs() || {};
+        var p = all[kind] || {};
+        return {
+            order: p.order ? p.order.slice() : [],
+            hidden: p.hidden ? p.hidden.slice() : []
+        };
+    }
+
+    function saveCatKindPrefs(kind, prefs) {
+        var all = Store.catPrefs() || {};
+        all[kind] = {
+            order: prefs.order || [],
+            hidden: prefs.hidden || []
+        };
+        Store.setCatPrefs(all);
+    }
+
+    function arrangedCats(kind, includeHidden) {
+        var raw = rawCatsFor(kind);
+        var prefs = catKindPrefs(kind);
+        var byId = {};
+        var i;
+        for (i = 0; i < raw.length; i++) {
+            if (raw[i]) byId[String(raw[i].id)] = raw[i];
+        }
+        var seen = {};
+        var out = [];
+        var order = prefs.order;
+        for (i = 0; i < order.length; i++) {
+            var id = String(order[i]);
+            if (byId[id] && !seen[id]) {
+                out.push(byId[id]);
+                seen[id] = true;
+            }
+        }
+        for (i = 0; i < raw.length; i++) {
+            var rid = String(raw[i].id);
+            if (!seen[rid]) out.push(raw[i]);
+        }
+        if (includeHidden) return out;
+        var hidden = {};
+        for (i = 0; i < prefs.hidden.length; i++) hidden[String(prefs.hidden[i])] = true;
+        var vis = [];
+        for (i = 0; i < out.length; i++) {
+            if (!hidden[String(out[i].id)]) vis.push(out[i]);
+        }
+        return vis;
+    }
+
+    function isCatHidden(kind, id) {
+        return catKindPrefs(kind).hidden.indexOf(String(id)) >= 0;
+    }
+
     function currentCats() {
         var cats;
-        if (tab === "live") cats = catalog.liveCats || [];
-        else if (tab === "movies") cats = catalog.vodCats || [];
-        else if (tab === "series") cats = catalog.seriesCats || [];
+        if (tab === "live" || tab === "movies" || tab === "series") cats = arrangedCats(tab, false);
         else return [];
         if (favItemsOfTab(false).length) {
             return [{ id: "fav", name: t("favorites") }].concat(cats);
@@ -301,6 +372,7 @@ var App = (function () {
                     '<div class="stage" id="stage"></div>' +
                 "</section>" +
             "</div>" +
+            '<div id="catedit" class="screen catedit-screen hidden"></div>' +
             '<div id="detail-screen" class="screen detail hidden"></div>' +
             '<div id="trailer-layer" class="trailer-layer hidden"></div>' +
             '<div id="player-ui" class="screen hidden"></div>' +
@@ -314,6 +386,7 @@ var App = (function () {
         if (!gate) return;
         show("gate", true);
         show("home", false);
+        show("catedit", false);
         show("detail-screen", false);
         show("player-ui", false);
         if (screen === "splash") {
@@ -410,7 +483,7 @@ var App = (function () {
         if (tab === "settings") {
             bar.innerHTML = "";
             if (searchBtn) addClass(searchBtn, "hidden");
-            meta.textContent = t("settings");
+            meta.textContent = "";
             return;
         }
         if (searchBtn) {
@@ -770,19 +843,53 @@ var App = (function () {
         }
     }
 
-    function renderSettingsInner() {
+    function cacheRefreshOpts() {
+        return [-1, 24, 72, 168, 0];
+    }
+
+    function normalizeCacheHours(h) {
+        var opts = cacheRefreshOpts();
+        return opts.indexOf(h) >= 0 ? h : 72;
+    }
+
+    function cacheRefreshLabel(h) {
+        h = normalizeCacheHours(h);
+        if (h === -1) return t("refreshAlways");
+        if (h === 0) return t("refreshNever");
+        if (h === 24) return t("hours24");
+        if (h === 72) return t("days3");
+        if (h === 168) return t("days7");
+        return t("days3");
+    }
+
+    function cacheExpired() {
+        var h = normalizeCacheHours(Store.settings().cacheHours);
+        if (h === 0) return false;
+        if (h === -1) return true;
+        var at = catalog.fetchedAt || 0;
+        if (!at) return true;
+        return (Date.now() - at) >= h * 3600 * 1000;
+    }
+
+    function settingsRows() {
         var s = Store.settings();
-        var refreshLabel = s.cacheHours === 0 ? t("manual") : (s.cacheHours + " " + t("hours"));
-        var rows = [
-            { name: t("refresh"), value: "" },
-            { name: t("refreshEvery"), value: refreshLabel },
-            { name: t("removeProvider"), value: provider ? provider.label : "" },
-            { name: t("about"), value: CONFIG.APP_VERSION }
+        var refreshLabel = cacheRefreshLabel(s.cacheHours);
+        return [
+            { id: "refresh", name: t("refresh"), value: "" },
+            { id: "interval", name: t("refreshEvery"), value: refreshLabel },
+            { id: "cats", name: t("editCats"), value: "" },
+            { id: "remove", name: t("removeProvider"), value: provider ? provider.label : "" },
+            { id: "about", name: t("about"), value: CONFIG.APP_VERSION }
         ];
-        var html = '<p style="color:#8e8e96;padding:4px 8px 18px">' + esc(t("legal")) + '</p><div class="settings-list">';
+    }
+
+    function renderSettingsInner() {
+        var rows = settingsRows();
+        var html = '<div class="settings-list">';
         if (settingsIndex >= rows.length) settingsIndex = rows.length - 1;
+        if (settingsIndex < 0) settingsIndex = 0;
         for (var i = 0; i < rows.length; i++) {
-            html += '<div class="row' + (i === settingsIndex ? " focused" : "") + '"><div class="name">' +
+            html += '<div class="row' + (i === settingsIndex ? " focused" : "") + '" data-set="' + rows[i].id + '"><div class="name">' +
                 esc(rows[i].name) + "</div><div>" + esc(rows[i].value) + "</div></div>";
         }
         html += "</div>";
@@ -791,6 +898,7 @@ var App = (function () {
 
     function paintHome(forceItems) {
         show("gate", false);
+        show("catedit", false);
         show("detail-screen", false);
         show("player-ui", false);
         show("home", true);
@@ -1082,6 +1190,7 @@ var App = (function () {
         el.innerHTML = html;
         show("gate", false);
         show("home", false);
+        show("catedit", false);
         show("player-ui", false);
         show("detail-screen", true);
     }
@@ -1448,6 +1557,7 @@ var App = (function () {
         ui.innerHTML = html;
         show("gate", false);
         show("home", false);
+        show("catedit", false);
         show("detail-screen", false);
         show("player-ui", true);
         if (sheet) paintSheet();
@@ -1655,6 +1765,7 @@ var App = (function () {
         var s = Store.settings();
         s.lastTab = tab;
         Store.setSettings(s);
+        if (tab === "live" || tab === "movies" || tab === "series") lastContentTab = tab;
         if (tab === "settings") {
             settingsIndex = 0;
             focusCol = "settings";
@@ -1696,7 +1807,7 @@ var App = (function () {
             ? { type: "m3u", playlist: provider.playlist, epg: provider.epg }
             : { type: "xtream", server: provider.base || provider.server, username: provider.username, password: provider.password };
         if (!cached || !cached.liveReady) connectProvider(payload);
-        else refreshCatalog(true);
+        else if (cacheExpired()) refreshCatalog(true);
     }
 
     function persistCatalog() {
@@ -2318,26 +2429,203 @@ var App = (function () {
         }
     }
 
+    function catEditKinds() {
+        return [
+            { id: "live", label: t("tv") },
+            { id: "movies", label: t("movies") },
+            { id: "series", label: t("series") }
+        ];
+    }
+
+    function catEditKindIndex() {
+        var kinds = catEditKinds();
+        for (var i = 0; i < kinds.length; i++) if (kinds[i].id === catEditKind) return i;
+        return 0;
+    }
+
+    function openCatEdit() {
+        screen = "catedit";
+        catEditKind = lastContentTab === "movies" || lastContentTab === "series" ? lastContentTab : "live";
+        catEditIndex = 0;
+        catEditFocus = "list";
+        if (!arrangedCats(catEditKind, true).length) catEditFocus = "kind";
+        paintCatEdit();
+    }
+
+    function closeCatEdit() {
+        screen = "home";
+        tab = "settings";
+        focusCol = "settings";
+        menuOpen = false;
+        invalidateItems();
+        paintHome(true);
+    }
+
+    function toggleCatHidden() {
+        var list = arrangedCats(catEditKind, true);
+        var cat = list[catEditIndex];
+        if (!cat) return;
+        var prefs = catKindPrefs(catEditKind);
+        var sid = String(cat.id);
+        var hid = prefs.hidden;
+        var at = hid.indexOf(sid);
+        if (at >= 0) hid.splice(at, 1);
+        else {
+            var visible = arrangedCats(catEditKind, false);
+            if (visible.length <= 1) {
+                toast(t("keepOneCat"));
+                return;
+            }
+            hid.push(sid);
+        }
+        prefs.hidden = hid;
+        prefs.order = list.map(function (c) { return String(c.id); });
+        saveCatKindPrefs(catEditKind, prefs);
+        paintCatEdit();
+    }
+
+    function moveCatEdit(dir) {
+        var list = arrangedCats(catEditKind, true);
+        var j = catEditIndex + dir;
+        if (j < 0 || j >= list.length) return;
+        var tmp = list[catEditIndex];
+        list[catEditIndex] = list[j];
+        list[j] = tmp;
+        var prefs = catKindPrefs(catEditKind);
+        prefs.order = list.map(function (c) { return String(c.id); });
+        saveCatKindPrefs(catEditKind, prefs);
+        catEditIndex = j;
+        paintCatEdit();
+    }
+
+    function paintCatEdit() {
+        var el = $("catedit");
+        if (!el) return;
+        var kinds = catEditKinds();
+        var list = arrangedCats(catEditKind, true);
+        if (catEditIndex >= list.length) catEditIndex = Math.max(0, list.length - 1);
+        var html = "<h1 class=\"ce-title\">" + esc(t("editCats")) + "</h1>" +
+            '<div class="ce-sub">' + esc(t("catEditHint")) + "</div>" +
+            '<div class="ce-kinds">';
+        for (var k = 0; k < kinds.length; k++) {
+            html += '<div class="ce-kind' + (kinds[k].id === catEditKind ? " active" : "") +
+                (catEditFocus === "kind" && k === catEditKindIndex() ? " focused" : "") +
+                '" data-kind="' + kinds[k].id + '">' + esc(kinds[k].label) + "</div>";
+        }
+        html += '</div><div class="ce-list">';
+        if (!list.length) {
+            html += '<div class="empty">' + esc(t("catEditEmpty")) + "</div>";
+        } else {
+            var vis = 8;
+            var start = Math.max(0, catEditIndex - Math.floor((vis - 1) / 2));
+            var end = Math.min(list.length, start + vis);
+            if (end - start < vis) start = Math.max(0, end - vis);
+            for (var i = start; i < end; i++) {
+                var hidden = isCatHidden(catEditKind, list[i].id);
+                html += '<div class="ce-row' + (catEditFocus === "list" && i === catEditIndex ? " focused" : "") +
+                    (hidden ? " is-hidden" : "") + '" data-ci="' + i + '">' +
+                    '<div class="ce-num">' + (i + 1) + "</div>" +
+                    '<div class="ce-name">' + esc(list[i].name) + "</div>" +
+                    '<div class="ce-vis ' + (hidden ? "off" : "on") + '">' +
+                    esc(hidden ? t("catHidden") : t("catVisible")) + "</div></div>";
+            }
+        }
+        html += "</div>";
+        el.innerHTML = html;
+        show("gate", false);
+        show("home", false);
+        show("detail-screen", false);
+        show("player-ui", false);
+        show("catedit", true);
+    }
+
+    function handleCatEditKey(k) {
+        var kinds = catEditKinds();
+        var list = arrangedCats(catEditKind, true);
+        if (k === "back") {
+            closeCatEdit();
+            return;
+        }
+        if (catEditFocus === "kind") {
+            var ki = catEditKindIndex();
+            if (k === "left") ki = Math.max(0, ki - 1);
+            if (k === "right") ki = Math.min(kinds.length - 1, ki + 1);
+            if (k === "left" || k === "right") {
+                catEditKind = kinds[ki].id;
+                catEditIndex = 0;
+            }
+            if (k === "down" || k === "enter") {
+                if (list.length) catEditFocus = "list";
+            }
+            paintCatEdit();
+            return;
+        }
+        if (k === "up") {
+            if (catEditIndex <= 0) {
+                catEditFocus = "kind";
+                paintCatEdit();
+                return;
+            }
+            catEditIndex -= 1;
+            paintCatEdit();
+            return;
+        }
+        if (k === "down") {
+            catEditIndex = Math.min(Math.max(0, list.length - 1), catEditIndex + 1);
+            paintCatEdit();
+            return;
+        }
+        if (k === "left" || k === "chup") {
+            moveCatEdit(-1);
+            return;
+        }
+        if (k === "right" || k === "chdown") {
+            moveCatEdit(1);
+            return;
+        }
+        if (k === "enter" || k === "red") toggleCatHidden();
+    }
+
+    function activateSettingsRow() {
+        var rows = settingsRows();
+        var row = rows[settingsIndex];
+        if (!row) return false;
+        if (row.id === "refresh") {
+            if (provider) refreshCatalog(false);
+            return true;
+        }
+        if (row.id === "interval") {
+            var s = Store.settings();
+            var opts = cacheRefreshOpts();
+            var i = opts.indexOf(normalizeCacheHours(s.cacheHours));
+            if (i < 0) i = opts.indexOf(72);
+            s.cacheHours = opts[(i + 1) % opts.length];
+            Store.setSettings(s);
+            return true;
+        }
+        if (row.id === "cats") {
+            openCatEdit();
+            return true;
+        }
+        if (row.id === "remove") {
+            Store.clearProvider();
+            provider = null;
+            catalog = Provider.emptyCatalog();
+            screen = "setup";
+            paintGate();
+            return true;
+        }
+        return false;
+    }
+
     function handleSettingsKey(k) {
-        var rows = 4;
+        var rows = settingsRows();
         if (k === "up") settingsIndex = Math.max(0, settingsIndex - 1);
-        if (k === "down") settingsIndex = Math.min(rows - 1, settingsIndex + 1);
+        if (k === "down") settingsIndex = Math.min(rows.length - 1, settingsIndex + 1);
         if (k === "left") { openMenu(); return; }
         if (k === "enter") {
-            var s = Store.settings();
-            if (settingsIndex === 0 && provider) refreshCatalog(false);
-            else if (settingsIndex === 1) {
-                var opts = [6, 12, 24, 0];
-                var i = opts.indexOf(s.cacheHours);
-                s.cacheHours = opts[(i + 1) % opts.length];
-                Store.setSettings(s);
-            } else if (settingsIndex === 2) {
-                Store.clearProvider();
-                provider = null;
-                catalog = Provider.emptyCatalog();
-                screen = "setup";
-                paintGate();
-                return;
+            if (activateSettingsRow()) {
+                if (screen !== "home") return;
             }
         }
         if (k === "back") {
@@ -2750,6 +3038,10 @@ var App = (function () {
             handlePlayerKey(k);
             return;
         }
+        if (screen === "catedit") {
+            handleCatEditKey(k);
+            return;
+        }
         if (screen === "home") handleHomeKey(k);
     }
 
@@ -2767,6 +3059,28 @@ var App = (function () {
 
     function afterSetupGate() {
         fillDefaultForm();
+        if (forceCatEditPreview()) {
+            catalog.liveCats = [
+                { id: "1", name: "Türkiye" },
+                { id: "2", name: "Spor" },
+                { id: "3", name: "Haber" },
+                { id: "4", name: "Belgesel" },
+                { id: "5", name: "Çocuk" }
+            ];
+            catalog.vodCats = [
+                { id: "10", name: "Aksiyon" },
+                { id: "11", name: "Komedi" },
+                { id: "12", name: "Dram" }
+            ];
+            catalog.seriesCats = [
+                { id: "20", name: "Yerli Dizi" },
+                { id: "21", name: "Yabancı Dizi" }
+            ];
+            catalog.liveReady = true;
+            lastContentTab = "live";
+            openCatEdit();
+            return;
+        }
         if (forceGatePreview()) {
             screen = "setup";
             statusMsg = "";
@@ -2927,6 +3241,28 @@ var App = (function () {
                 handleGateClick(e);
                 return;
             }
+            if (screen === "catedit") {
+                var ce = e.target;
+                while (ce && ce !== document.body) {
+                    var kind = ce.getAttribute && ce.getAttribute("data-kind");
+                    if (kind) {
+                        catEditKind = kind;
+                        catEditIndex = 0;
+                        catEditFocus = "kind";
+                        paintCatEdit();
+                        return;
+                    }
+                    var ci = ce.getAttribute && ce.getAttribute("data-ci");
+                    if (ci != null) {
+                        catEditIndex = Number(ci);
+                        catEditFocus = "list";
+                        toggleCatHidden();
+                        return;
+                    }
+                    ce = ce.parentNode;
+                }
+                return;
+            }
             var n = e.target;
             if (screen === "detail") {
                 while (n && n !== document.body) {
@@ -2959,6 +3295,15 @@ var App = (function () {
             if (screen !== "home") return;
             n = e.target;
             while (n && n !== document.body) {
+                var setId = n.getAttribute && n.getAttribute("data-set");
+                if (setId && tab === "settings") {
+                    var srows = settingsRows();
+                    for (var sr = 0; sr < srows.length; sr++) {
+                        if (srows[sr].id === setId) settingsIndex = sr;
+                    }
+                    activateSettingsRow();
+                    return;
+                }
                 var cls2 = String(n.className || "");
                 if (cls2.indexOf("cat-search") >= 0) {
                     openSearch();

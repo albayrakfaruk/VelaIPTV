@@ -2038,3 +2038,129 @@ input:focus {
     z-index: 12;
     white-space: nowrap;
 }
+
+.catedit-screen {
+    background: #0b0b0d;
+    display: flex;
+    flex-direction: column;
+    padding: 40px 64px 28px;
+}
+
+.ce-title {
+    margin: 0;
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: -0.4px;
+}
+
+.ce-sub {
+    margin: 10px 0 28px;
+    color: #8e8e96;
+    font-size: 24px;
+}
+
+.ce-kinds {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 22px;
+    flex-shrink: 0;
+}
+
+.ce-kind {
+    height: 64px;
+    padding: 0 28px;
+    border-radius: 999px;
+    background: #151518;
+    border: 2px solid #2a2a30;
+    color: #8e8e96;
+    font-size: 26px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+}
+
+.ce-kind.active {
+    color: #fff;
+    border-color: #e53935;
+    background: rgba(229, 57, 53, 0.12);
+}
+
+.ce-kind.focused {
+    box-shadow: 0 0 0 3px #e53935;
+    border-color: #fff;
+    color: #fff;
+}
+
+.ce-list {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.ce-row {
+    height: 88px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 0 28px;
+    border-radius: 12px;
+    margin-bottom: 8px;
+    background: rgba(20, 20, 24, 0.7);
+}
+
+.ce-row.focused {
+    background: #1a1a1f;
+    box-shadow: inset 4px 0 0 #e53935;
+}
+
+.ce-row.is-hidden {
+    opacity: 0.48;
+}
+
+.ce-num {
+    width: 56px;
+    color: #8e8e96;
+    font-size: 22px;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.ce-row.focused .ce-num { color: #ef9a9a; }
+
+.ce-name {
+    flex: 1;
+    min-width: 0;
+    font-weight: 650;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ce-vis {
+    min-width: 148px;
+    height: 44px;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.ce-vis.on {
+    background: rgba(229, 57, 53, 0.18);
+    color: #ef9a9a;
+}
+
+.ce-vis.off {
+    background: #1c1c22;
+    color: #8e8e96;
+}
+
+.ce-hint {
+    flex-shrink: 0;
+    color: #8e8e96;
+    font-size: 22px;
+    padding-top: 16px;
+}
