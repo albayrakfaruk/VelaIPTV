@@ -49,7 +49,18 @@ var Store = (function () {
         setFavorites: function (v) { set("favorites", v); },
         history: function () { return get("history", []); },
         setHistory: function (v) { set("history", v); },
-        settings: function () { return Object.assign(defaults(), get("settings", {})); },
+        settings: function () {
+            var saved = get("settings", {}) || {};
+            var s = Object.assign(defaults(), saved);
+            if (!saved.cacheMigrated168) {
+                if (saved.cacheHours == null || saved.cacheHours === 72) {
+                    s.cacheHours = CONFIG.DEFAULT_CACHE_HOURS;
+                }
+                s.cacheMigrated168 = true;
+                set("settings", s);
+            }
+            return s;
+        },
         setSettings: function (v) { set("settings", Object.assign(defaults(), v)); }
     };
 })();

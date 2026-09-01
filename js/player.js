@@ -23,12 +23,15 @@ var Player = (function () {
     var audioUserPicked = false;
     var probedAudio = [];
     var probedText = [];
+    var probeStarted = false;
+    var probeDone = false;
     var subEnabled = false;
     var openToken = 0;
     var liveMode = false;
     var paused = false;
     var userPaused = false;
     var startAtMs = 0;
+    var startHold = false;
     var htmlRaw = "";
     var remuxing = false;
     var remuxOffsetMs = 0;
@@ -36,8 +39,8 @@ var Player = (function () {
     var ASPECTS = ["fit", "fill", "43", "stretch"];
     var SPEEDS = [0.75, 1, 1.25, 1.5, 2];
     var LANG_NAMES = {
-        tur: "Türkçe", tr: "Türkçe", turkish: "Türkçe",
-        eng: "English", en: "English",
+        tur: "Türkçe", tr: "Türkçe", turkish: "Türkçe", turkce: "Türkçe",
+        eng: "English", en: "English", english: "English",
         deu: "Deutsch", ger: "Deutsch", de: "Deutsch",
         fra: "Français", fre: "Français", fr: "Français",
         spa: "Español", es: "Español",
@@ -60,7 +63,8 @@ var Player = (function () {
         hin: "हिन्दी", hi: "हिन्दी",
         zho: "中文", chi: "中文", zh: "中文",
         jpn: "日本語", ja: "日本語",
-        kor: "한국어", ko: "한국어"
+        kor: "한국어", ko: "한국어",
+        "türkçe": "Türkçe", ingilizce: "English"
     };
 
     function loadScript(src, cb) {
@@ -154,11 +158,32 @@ var Player = (function () {
         if (onBuffer) onBuffer(!!on);
     }
 
+    function emitAvTime(t) {
+        if (!onTime || !usingAv) return;
+        var cur = t;
+        var dur = 0;
+        try {
+            if (cur == null || cur < 0) cur = webapis.avplay.getCurrentTime();
+        } catch (e) { cur = t || 0; }
+        try { if (!liveMode) dur = webapis.avplay.getDuration(); } catch (e2) {}
+        if (startHold && startAtMs > 1500) {
+            var real = 0;
+            try { real = webapis.avplay.getCurrentTime(); } catch (e3) {}
+            if (real > 1500 && (real + 2500 >= startAtMs || real > startAtMs)) {
+                startHold = false;
+                cur = real;
+            } else {
+                cur = startAtMs;
+            }
+        }
+        onTime(cur || 0, dur);
+    }
+
     function tick() {
         if (!onTime) return;
         try {
             if (usingAv) {
-                onTime(webapis.avplay.getCurrentTime(), liveMode ? 0 : webapis.avplay.getDuration());
+                emitAvTime();
             } else if (video) {
                 var cur = (video.currentTime || 0) * 1000;
                 var dur = video.duration;
@@ -242,32 +267,73 @@ var Player = (function () {
 
     function parseExtra(extra) {
         if (!extra) return {};
-        if (typeof extra === "object") return extra;
-        var s = String(extra);
-        try { return JSON.parse(s); } catch (e) {}
-        var out = {};
-        var parts = s.split(/[&;,]/);
-        for (var i = 0; i < parts.length; i++) {
-            var kv = parts[i].split("=");
-            if (kv.length >= 2) out[kv[0].trim()] = kv.slice(1).join("=").trim();
+        if (typeof extra === "object") {
+            var norm = {};
+            for (var k in extra) {
+                if (Object.prototype.hasOwnProperty.call(extra, k)) {
+                    norm[String(k).toLowerCase()] = extra[k];
+                }
+            }
+            return norm;
         }
+        var s = String(extra);
+        try { return parseExtra(JSON.parse(s)); } catch (e) {}
+        var out = {};
+        var parts = s.split(/[\s&;,]+/);
+        for (var i = 0; i < parts.length; i++) {
+            if (!parts[i]) continue;
+            var kv = parts[i].split("=");
+            if (kv.length >= 2) out[kv[0].trim().toLowerCase()] = kv.slice(1).join("=").trim();
+        }
+        var scraped = scrapeLang(s);
+        if (scraped && !out.track_lang && !out.language && !out.lang) out.track_lang = scraped;
         if (!Object.keys(out).length && s) out.label = s;
         return out;
     }
 
+    function scrapeLang(s) {
+        if (s && typeof s === "object") {
+            try { s = JSON.stringify(s); } catch (e) { s = ""; }
+        }
+        s = String(s || "");
+        if (!s) return "";
+        var m = s.match(/(?:track_lang|subtitle_lang|language_code|lang_code|language|lang)\s*[:=]\s*["']?([a-z]{2,3})(?![a-z])/i);
+        if (m) {
+            var c = m[1].toLowerCase();
+            if (c !== "und" && c !== "mul") return c;
+        }
+        m = s.match(/\(([a-z]{2,3})\)/i);
+        if (m && LANG_NAMES[m[1].toLowerCase()]) return m[1].toLowerCase();
+        m = s.match(/\b(eng|tur|fra|deu|ger|spa|ita|por|rus|ara|nld|pol|hun|ces|ron|bul|ell|swe|nor|dan|fin|ukr|hin|zho|jpn|kor|gre|dut|fre|chi|en|tr|de|fr|es|it|pt|ru|ar|nl|pl|hu)\b/i);
+        if (m) return m[1].toLowerCase();
+        if (/ingilizce|\benglish\b/i.test(s)) return "eng";
+        if (/türkçe|turkce|\bturkish\b/i.test(s)) return "tur";
+        var t = s.replace(/^\s+|\s+$/g, "");
+        if (/^[a-z]{2,3}$/i.test(t) && LANG_NAMES[t.toLowerCase()]) return t.toLowerCase();
+        return "";
+    }
+
     function langCode(info, fallback) {
         var raw = (info && (info.language || info.track_lang || info.lang || info.Language ||
-            info.subtitle_lang)) || fallback || "";
+            info.subtitle_lang || info.language_code || info.lang_code)) || "";
         raw = String(raw).trim();
-        if (!raw || raw.toLowerCase() === "und" || raw === "null") return "";
-        var m = raw.toLowerCase().match(/[a-z]{2,3}/);
-        return m ? m[0] : "";
+        if (!raw) raw = scrapeLang(fallback);
+        if (!raw) return "";
+        var lower = raw.toLowerCase();
+        if (lower === "und" || lower === "null" || lower === "undefined" || lower === "mul") return "";
+        var bcp = lower.match(/^([a-z]{2,3})(?:[-_][a-z0-9]+)?$/);
+        if (bcp) lower = bcp[1];
+        if (LANG_NAMES[lower]) return lower;
+        if (/^[a-z]{2,3}$/.test(lower)) return lower;
+        return scrapeLang(raw);
     }
 
     function langName(code) {
         if (!code) return "";
         var c = String(code).toLowerCase();
-        return LANG_NAMES[c] || LANG_NAMES[c.slice(0, 3)] || LANG_NAMES[c.slice(0, 2)] || code.toUpperCase();
+        if (LANG_NAMES[c]) return LANG_NAMES[c];
+        if (c.length === 2 && LANG_NAMES[c]) return LANG_NAMES[c];
+        return "";
     }
 
     function channelTag(info) {
@@ -365,16 +431,19 @@ var Player = (function () {
     function walkElems(b, start, end, max, fn) {
         var i = start;
         var n = 0;
+        end = Math.min(end, b.length);
         while (i < end - 1 && n < (max || 80)) {
             var id = ebmlId(b, i);
             var sz = id ? ebmlSize(b, i + id.n) : null;
             if (!id || !sz) break;
             var body = i + id.n + sz.n;
-            if (sz.unk || body > b.length) break;
+            if (body > end) break;
+            var payload = sz.unk ? (end - body) : sz.v;
+            if (body + payload > end) payload = end - body;
+            fn(id.v, body, payload, i);
+            if (sz.unk) break;
             var next = body + sz.v;
-            if (next > end + 8) break;
-            fn(id.v, body, sz.v, i);
-            if (next <= i) break;
+            if (next > end || next <= i) break;
             i = next;
             n += 1;
         }
@@ -385,9 +454,9 @@ var Player = (function () {
         var text = [];
         var tracksAt = -1;
         var tracksSize = 0;
-        walkElems(b, 0, b.length, 12, function (id, body, size) {
+        walkElems(b, 0, b.length, 16, function (id, body, size) {
             if (id === 0x18538067) {
-                walkElems(b, body, Math.min(b.length, body + size), 24, function (sid, sbody, ssize) {
+                walkElems(b, body, Math.min(b.length, body + size), 48, function (sid, sbody, ssize) {
                     if (sid === 0x1654AE6B && tracksAt < 0) {
                         tracksAt = sbody;
                         tracksSize = ssize;
@@ -395,16 +464,29 @@ var Player = (function () {
                 });
             }
         });
+        if (tracksAt < 0) {
+            for (var p = 0; p < b.length - 8; p++) {
+                if (b[p] === 0x16 && b[p + 1] === 0x54 && b[p + 2] === 0xAE && b[p + 3] === 0x6B) {
+                    var tsz = ebmlSize(b, p + 4);
+                    if (tsz && !tsz.unk) {
+                        tracksAt = p + 4 + tsz.n;
+                        tracksSize = tsz.v;
+                        break;
+                    }
+                }
+            }
+        }
         if (tracksAt < 0) return { audio: audio, text: text };
-        walkElems(b, tracksAt, Math.min(b.length, tracksAt + tracksSize), 32, function (id, body, size) {
+        walkElems(b, tracksAt, Math.min(b.length, tracksAt + tracksSize), 64, function (id, body, size) {
             if (id !== 0xAE) return;
             var rec = { type: 0, num: 0, codec: "", name: "", lang: "", ch: 0, def: 1 };
-            walkElems(b, body, body + size, 40, function (cid, cbody, csize) {
+            walkElems(b, body, body + size, 48, function (cid, cbody, csize) {
                 if (cid === 0xD7) rec.num = readBe(b, cbody, csize);
                 else if (cid === 0x83) rec.type = readBe(b, cbody, csize);
                 else if (cid === 0x86) rec.codec = ebmlStr(b, cbody, csize);
                 else if (cid === 0x536E) rec.name = ebmlStr(b, cbody, csize);
-                else if (cid === 0x22B59C || cid === 0x22B59D) rec.lang = ebmlStr(b, cbody, csize);
+                else if (cid === 0x22B59D) rec.lang = ebmlStr(b, cbody, csize);
+                else if (cid === 0x22B59C && !rec.lang) rec.lang = ebmlStr(b, cbody, csize);
                 else if (cid === 0x88) rec.def = readBe(b, cbody, csize);
                 else if (cid === 0xE1) {
                     walkElems(b, cbody, cbody + csize, 16, function (aid, abody, asize) {
@@ -412,6 +494,7 @@ var Player = (function () {
                     });
                 }
             });
+            if (String(rec.lang).toLowerCase() === "und") rec.lang = "";
             var info = {
                 language: rec.lang,
                 label: cleanTrackName(rec.name),
@@ -482,7 +565,9 @@ var Player = (function () {
             var src = probed[i].info || {};
             if (!list[i].info) list[i].info = {};
             if (src.label && !list[i].info.label) list[i].info.label = src.label;
-            if (src.language && !list[i].info.language) list[i].info.language = src.language;
+            if (src.language && !langName(langCode(list[i].info, list[i].extra))) {
+                list[i].info.language = src.language;
+            }
             if (src.channels && !list[i].info.channels) list[i].info.channels = src.channels;
             if (src.codec && !list[i].info.codec) list[i].info.codec = src.codec;
         }
@@ -493,24 +578,56 @@ var Player = (function () {
         var xhr = new XMLHttpRequest();
         xhr.open("GET", url, true);
         xhr.responseType = "arraybuffer";
-        xhr.timeout = 18000;
-        try { xhr.setRequestHeader("Range", "bytes=0-262143"); } catch (e) {}
+        xhr.timeout = 12000;
+        try { xhr.setRequestHeader("Range", "bytes=0-524287"); } catch (e) {}
+        xhr.onprogress = function (ev) {
+            if (ev && ev.loaded > 600000) {
+                try { xhr.abort(); } catch (e2) {}
+            }
+        };
         xhr.onload = function () {
+            probeStarted = false;
             if (token !== openToken) return;
             if (xhr.status < 200 || xhr.status >= 400 || !xhr.response) return;
-            var b = new Uint8Array(xhr.response);
-            if (b.length < 16) return;
-            var found = { audio: [], text: [] };
-            if (b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3) found = parseMkvTracks(b);
-            else if (ascii4(b, 4) === "ftyp") found = parseMp4Tracks(b);
-            probedAudio = found.audio || [];
-            probedText = found.text || [];
-            for (var i = 0; i < probedAudio.length; i++) probedAudio[i].index = i;
-            for (var t = 0; t < probedText.length; t++) probedText[t].index = t;
-            refreshTracks();
+            applyProbeBuffer(xhr.response, token);
         };
-        xhr.onerror = function () {};
+        xhr.onabort = function () {
+            var buf = xhr.response;
+            probeStarted = false;
+            if (token !== openToken) return;
+            if (buf && buf.byteLength >= 16) applyProbeBuffer(buf, token);
+        };
+        xhr.onerror = function () { probeStarted = false; };
+        xhr.ontimeout = function () { probeStarted = false; };
         xhr.send();
+    }
+
+    function applyProbeBuffer(buf, token) {
+        if (token !== openToken || !buf) return;
+        var b = new Uint8Array(buf);
+        if (b.length > 524288) b = b.subarray(0, 524288);
+        if (b.length < 16) return;
+        var found = { audio: [], text: [] };
+        if (b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3) found = parseMkvTracks(b);
+        else if (ascii4(b, 4) === "ftyp") found = parseMp4Tracks(b);
+        probedAudio = found.audio || [];
+        probedText = found.text || [];
+        for (var i = 0; i < probedAudio.length; i++) probedAudio[i].index = i;
+        for (var t = 0; t < probedText.length; t++) probedText[t].index = t;
+        if (probedAudio.length || probedText.length) probeDone = true;
+        refreshTracks();
+    }
+
+    function scheduleTrackProbe(delayMs) {
+        if (probeStarted || probeDone || liveMode || !current || !current.url) return;
+        probeStarted = true;
+        var raw = current.url;
+        var url = (Http && Http.wrap) ? Http.wrap(raw) : raw;
+        var token = openToken;
+        setTimeout(function () {
+            if (token !== openToken) return;
+            probeMediaTracks(url, token);
+        }, delayMs || 0);
     }
 
     function parseAllTracks(raw) {
@@ -525,11 +642,16 @@ var Player = (function () {
             var tr = list[i];
             var type = (tr.type || tr.trackType || "").toUpperCase();
             var extra = tr.extra_info || tr.extraInfo || tr.extra || "";
+            var info = parseExtra(extra);
+            var nativeLang = tr.language || tr.lang || tr.track_lang || tr.Language || "";
+            if (nativeLang && !info.language && !info.track_lang && !info.lang) {
+                info.language = nativeLang;
+            }
             var rec = {
                 index: tr.index != null ? Number(tr.index) : i,
                 type: type,
                 extra: extra,
-                info: parseExtra(extra)
+                info: info
             };
             if (type === "AUDIO") audioTracks.push(rec);
             else if (type === "TEXT" || type === "SUBTITLE") textTracks.push(rec);
@@ -568,10 +690,16 @@ var Player = (function () {
     function trackTitle(rec, fallback, i) {
         if (!rec) return fallback;
         var info = rec.info || parseExtra(rec.extra);
-        var lab = stripChannelFromName(cleanTrackName(info.label));
-        if (lab && lab.length > 1 && !/^[0-9]+$/.test(lab) && !isChannelLabel(lab)) return lab;
-        var name = langName(langCode(info, rec.extra));
-        if (name) return name;
+        var code = langCode(info, rec.extra) || scrapeLang(info.label);
+        var named = langName(code);
+        if (named) return named;
+        var lab = stripChannelFromName(cleanTrackName(info.label || ""));
+        var fromLab = langName(String(lab).toLowerCase());
+        if (fromLab) return fromLab;
+        if (lab && lab.length > 2 && !/^[0-9]+$/.test(lab) && !isChannelLabel(lab) &&
+            !/^(fourcc|tx3g|stpp|wvtt|utf-?8|ass|ssa|pgs|srt|vobsub|h?dmv|s_text)/i.test(lab)) {
+            return lab;
+        }
         return fallback + " " + (i + 1);
     }
 
@@ -832,12 +960,15 @@ var Player = (function () {
             onbufferingcomplete: function () {
                 emitBuffer(false);
                 refreshTracks();
+                emitAvTime();
+                if (usingAv && !liveMode && !probeDone && !probeStarted) {
+                    scheduleTrackProbe(300);
+                }
             },
             onstreamcompleted: function () { if (onEnd) onEnd(); },
             oncurrentplaytime: function (t) {
-                if (onTime) {
-                    try { onTime(t, liveMode ? 0 : webapis.avplay.getDuration()); } catch (e) {}
-                }
+                emitBuffer(false);
+                emitAvTime(t);
             },
             onerror: function (err) { emitBuffer(false); if (onError) onError(err); },
             onevent: function () {},
@@ -928,12 +1059,17 @@ var Player = (function () {
         return next;
     }
 
-    function tuneAv(isLive) {
+    function tuneAv(isLive, url) {
         applyAspect();
         try {
-            webapis.avplay.setStreamingProperty("PREBUFFER_MODE", isLive ? "2500" : "6000");
+            webapis.avplay.setStreamingProperty("PREBUFFER_MODE", isLive ? "1000" : "3500");
         } catch (e3) {}
-        try { webapis.avplay.setBufferingTimeout(isLive ? 8 : 15); } catch (e4) {}
+        try { webapis.avplay.setBufferingTimeout(isLive ? 4 : 12); } catch (e4) {}
+        if (url && String(url).indexOf(".m3u8") !== -1) {
+            try {
+                webapis.avplay.setStreamingProperty("ADAPTIVE_INFO", "FIXED_MAX_RESOLUTION=1920x1080");
+            } catch (e5) {}
+        }
     }
 
     function playAv(url, token) {
@@ -941,19 +1077,34 @@ var Player = (function () {
         bindAvListener();
         emitBuffer(true);
         webapis.avplay.open(url);
-        tuneAv(liveMode);
+        tuneAv(liveMode, url);
         function afterReady() {
             if (token !== openToken) return;
             applyAspect();
+            var sought = false;
+            if (!liveMode && startAtMs > 1500) {
+                try {
+                    webapis.avplay.seekTo(Math.floor(startAtMs));
+                    sought = true;
+                } catch (e) {}
+            }
             webapis.avplay.play();
             paused = false;
-            emitBuffer(false);
             applySpeed();
             refreshTracks();
-            if (!liveMode && startAtMs > 8000) {
-                try { webapis.avplay.seekTo(Math.floor(startAtMs)); } catch (e) {
-                    try { webapis.avplay.jumpForward(Math.floor(startAtMs)); } catch (e2) {}
+            clearTimer();
+            timeTimer = setInterval(tick, 400);
+            if (!sought && !liveMode && startAtMs > 1500) {
+                try { webapis.avplay.seekTo(Math.floor(startAtMs)); } catch (e2) {
+                    try { webapis.avplay.jumpForward(Math.floor(startAtMs)); } catch (e3) {}
                 }
+            }
+            emitAvTime(startAtMs || 0);
+            if (!liveMode) {
+                setTimeout(function () {
+                    if (token !== openToken) return;
+                    if (!probeDone && !probeStarted) scheduleTrackProbe(0);
+                }, 5000);
             }
         }
         if (webapis.avplay.prepareAsync) {
@@ -1035,14 +1186,16 @@ var Player = (function () {
             }, {
                 enableWorker: false,
                 enableStashBuffer: !!isRemux,
-                stashInitialSize: isRemux ? 1024 : 128,
+                stashInitialSize: isRemux ? 1024 : 64,
                 lazyLoad: false,
                 deferLoadAfterSourceOpen: false,
                 accurateSeek: !liveMode && !isRemux,
                 autoCleanupSourceBuffer: true,
-                autoCleanupMaxBackwardDuration: 10,
-                autoCleanupMinBackwardDuration: 4,
-                liveBufferLatencyChasing: false,
+                autoCleanupMaxBackwardDuration: liveMode ? 6 : 10,
+                autoCleanupMinBackwardDuration: liveMode ? 2 : 4,
+                liveBufferLatencyChasing: !!(liveMode && !isRemux),
+                liveBufferLatencyMaxLatency: 3,
+                liveBufferLatencyMinRemain: 0.6,
                 fixAudioTimestampGap: true
             });
             msePlayer.attachMediaElement(video);
@@ -1066,12 +1219,12 @@ var Player = (function () {
                 emitBuffer(true);
                 hls = new Hls({
                     enableWorker: false,
-                    lowLatencyMode: false,
-                    liveSyncDurationCount: 3,
-                    liveMaxLatencyDurationCount: 8,
-                    maxBufferLength: liveMode ? 8 : 30,
-                    maxMaxBufferLength: liveMode ? 12 : 60,
-                    backBufferLength: liveMode ? 4 : 30
+                    lowLatencyMode: !!liveMode,
+                    liveSyncDurationCount: liveMode ? 2 : 3,
+                    liveMaxLatencyDurationCount: liveMode ? 5 : 8,
+                    maxBufferLength: liveMode ? 6 : 30,
+                    maxMaxBufferLength: liveMode ? 10 : 60,
+                    backBufferLength: liveMode ? 3 : 30
                 });
                 hls.loadSource(url);
                 hls.attachMedia(video);
@@ -1136,6 +1289,7 @@ var Player = (function () {
         current = item;
         liveMode = isLiveItem(item);
         startAtMs = liveMode ? 0 : ((handlers && handlers.startAt) || 0);
+        startHold = !liveMode && startAtMs > 1500;
         onTime = handlers && handlers.onTime;
         onEnd = handlers && handlers.onEnd;
         onError = handlers && handlers.onError;
@@ -1148,6 +1302,8 @@ var Player = (function () {
         audioUserPicked = false;
         probedAudio = [];
         probedText = [];
+        probeStarted = false;
+        probeDone = false;
         subEnabled = false;
         playSpeed = liveMode ? 1 : savedSpeed();
         paused = false;
@@ -1155,6 +1311,7 @@ var Player = (function () {
         clearSub();
         var token = ++openToken;
         var raw = item.url;
+        if (liveMode && item.urlTs && !item._liveUseTs) raw = item.urlTs;
         var url = raw;
         if (Http && Http.wrap) url = Http.wrap(raw);
         if (!url) {
@@ -1162,7 +1319,7 @@ var Player = (function () {
             return;
         }
         playUrl(url, token, raw);
-        if (!liveMode) probeMediaTracks(url, token);
+        if (!liveMode) scheduleTrackProbe(0);
     }
 
     function pause() {
@@ -1224,6 +1381,7 @@ var Player = (function () {
         if (liveMode) return;
         var target = clampSeekMs(ms);
         startAtMs = target;
+        startHold = false;
         try {
             if (usingAv) {
                 webapis.avplay.seekTo(target);
@@ -1261,6 +1419,8 @@ var Player = (function () {
         audioTracks = [];
         probedAudio = [];
         probedText = [];
+        probeStarted = false;
+        probeDone = false;
         subIndex = -1;
         audioIndex = 0;
         audioBound = false;

@@ -849,7 +849,7 @@ var App = (function () {
 
     function normalizeCacheHours(h) {
         var opts = cacheRefreshOpts();
-        return opts.indexOf(h) >= 0 ? h : 72;
+        return opts.indexOf(h) >= 0 ? h : 168;
     }
 
     function cacheRefreshLabel(h) {
@@ -859,7 +859,7 @@ var App = (function () {
         if (h === 24) return t("hours24");
         if (h === 72) return t("days3");
         if (h === 168) return t("days7");
-        return t("days3");
+        return t("days7");
     }
 
     function cacheExpired() {
@@ -1227,15 +1227,19 @@ var App = (function () {
         return { title: item.name || "", sub: "", list: false };
     }
 
-    function resumePoint(item) {
-        if (!item || item.kind === "live") return 0;
+    function historyRecord(item) {
+        if (!item || item.kind === "live") return null;
         var hist = Store.history();
         var key = Provider.itemKey(item);
         for (var i = 0; i < hist.length; i++) {
-            if (hist[i].key === key && hist[i].t > 15000 && hist[i].d && hist[i].t < hist[i].d * 0.9) {
-                return hist[i].t;
-            }
+            if (hist[i].key === key) return hist[i];
         }
+        return null;
+    }
+
+    function resumePoint(item) {
+        var rec = historyRecord(item);
+        if (rec && rec.t > 15000 && rec.d && rec.t < rec.d * 0.9) return rec.t;
         return 0;
     }
 
@@ -1963,23 +1967,29 @@ var App = (function () {
             }
         }
         itemIndex = idx < 0 ? 0 : idx;
+        var reuseUi = screen === "player" && $("player-ui") && !hasClass($("player-ui"), "hidden");
         screen = "player";
         osdVisible = true;
         osdFocus = defaultPlayerFocus();
         sheet = "";
-        playTime = 0;
+        var startOverride = replayAt;
+        replayAt = null;
+        var startAt = item.kind === "live" ? 0 : (startOverride != null ? startOverride : resumePoint(item));
+        playTime = startAt || 0;
         playDur = metaDurationMs(item, detailInfo && detailItem && detailItem.id === item.id ? detailInfo : null);
+        var rec = historyRecord(item);
+        if (rec && rec.d > playDur) playDur = rec.d;
+        if (startAt > 0) pendingSeek = startAt;
         subLabel = "";
         osdEpg = "";
         playerBuffering = true;
-        var startOverride = replayAt;
-        replayAt = null;
-        paintPlayer(true);
+        if (item.kind === "live") item._liveUseTs = false;
+        paintPlayer(!reuseUi);
         bumpOsd();
         if (item.kind === "live" && provider) {
             Provider.shortEpg(provider, item.id).then(function (title) {
                 osdEpg = title || "";
-                if (screen === "player") paintPlayer(true);
+                if (screen === "player") paintPlayer(false);
             }).catch(function () {});
         }
         if (item.kind === "vod" && playDur < 1000 && provider) {
@@ -1992,8 +2002,8 @@ var App = (function () {
                 }
             }).catch(function () {});
         }
-        Player.open(item, {
-            startAt: startOverride != null ? startOverride : resumePoint(item),
+        var handlers = {
+            startAt: startAt,
             onTime: function (cur, dur) {
                 if (dur > 8000) playDur = dur;
                 if (seekTarget >= 0) {
@@ -2035,20 +2045,18 @@ var App = (function () {
                 if ((sheet === "sub" || sheet === "audio") && !painting) paintSheet();
             },
             onError: function () {
-                if (item.kind === "live" && item.urlTs && item.url !== item.urlTs) {
-                    item.url = item.urlTs;
-                    Player.open(item, {
-                        onTime: function (cur, dur) { playTime = cur; playDur = dur; if (osdVisible) paintPlayer(false); },
-                        onBuffer: function (on) { playerBuffering = !!on; if (screen === "player") paintPlayer(false); },
-                        onEnd: stopPlay,
-                        onError: function () { toast(t("noStream")); stopPlay(); }
-                    });
-                } else {
-                    toast((item.url || "").indexOf(".mkv") !== -1 ? t("mkvHint") : t("noStream"));
-                    stopPlay();
+                if (item.kind === "live" && item.url && item.urlTs && item.url !== item.urlTs && !item._liveUseTs) {
+                    item._liveUseTs = true;
+                    playerBuffering = true;
+                    if (screen === "player") syncPlayerProgress();
+                    Player.open(item, handlers);
+                    return;
                 }
+                toast((item.url || "").indexOf(".mkv") !== -1 ? t("mkvHint") : t("noStream"));
+                stopPlay();
             }
-        });
+        };
+        Player.open(item, handlers);
         rememberHistory(item);
     }
 
@@ -2090,7 +2098,7 @@ var App = (function () {
     }
 
     function saveProgress(item, cur, dur) {
-        if (!dur || item.kind === "live") return;
+        if (!dur || item.kind === "live" || cur < 8000) return;
         var hist = Store.history();
         var key = Provider.itemKey(item);
         var next = [];
@@ -2598,7 +2606,7 @@ var App = (function () {
             var s = Store.settings();
             var opts = cacheRefreshOpts();
             var i = opts.indexOf(normalizeCacheHours(s.cacheHours));
-            if (i < 0) i = opts.indexOf(72);
+            if (i < 0) i = opts.indexOf(168);
             s.cacheHours = opts[(i + 1) % opts.length];
             Store.setSettings(s);
             return true;
