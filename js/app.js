@@ -20,6 +20,13 @@ var App = (function () {
     var searchFocus = "keys";
     var searchKeyIndex = 0;
     var searchQuery = "";
+    var searchIndex = null;
+    var searchIndexTab = "";
+    var searchIndexAt = 0;
+    var searchItemsCache = [];
+    var searchItemsKey = "";
+    var searchHitTimer = null;
+    var lastSearchKeyEl = null;
     var toastTimer = null;
     var hintText = "";
     var hintTimer = null;
@@ -329,6 +336,7 @@ var App = (function () {
         itemsCache = null;
         itemsCacheKey = "";
         itemWin.start = -1;
+        if (searchIndexTab && searchIndexTab !== tab) resetSearchIndex();
     }
 
     function currentItems() {
@@ -522,45 +530,70 @@ var App = (function () {
         "z","x","c","v","b","n","m","ü","ş","i",
         "ö","ç","space","back","clear"
     ];
+    var FOLD_MAP = {
+        "ı": "i", "İ": "i", "I": "i",
+        "ğ": "g", "Ğ": "g",
+        "ü": "u", "Ü": "u",
+        "ş": "s", "Ş": "s",
+        "ö": "o", "Ö": "o",
+        "ç": "c", "Ç": "c"
+    };
+
     function foldSearch(s) {
-        return String(s || "")
-            .replace(/İ/g, "i")
-            .replace(/I/g, "i")
-            .toLowerCase()
-            .replace(/ı/g, "i")
-            .replace(/ğ/g, "g")
-            .replace(/ü/g, "u")
-            .replace(/ş/g, "s")
-            .replace(/ö/g, "o")
-            .replace(/ç/g, "c");
+        s = String(s || "").toLowerCase();
+        var out = "";
+        for (var i = 0; i < s.length; i++) {
+            var ch = s.charAt(i);
+            out += FOLD_MAP[ch] || ch;
+        }
+        return out;
     }
 
-    function scoreSearch(it, raw, folded) {
-        if (it.year != null && String(it.year) === raw) return 0;
-        var n = foldSearch(it.name);
-        if (!n) return -1;
-        if (n.indexOf(folded) === 0) return 1;
-        if (n.indexOf(" " + folded) >= 0) return 2;
-        if (folded.length >= 2 && n.indexOf(folded) >= 0) return 3;
-        return -1;
+    function resetSearchIndex() {
+        searchIndex = null;
+        searchIndexTab = "";
+        searchIndexAt = 0;
+        searchItemsCache = [];
+        searchItemsKey = "";
     }
 
-    function takeSearch(list, raw, folded, limit) {
-        if (!list || !list.length || !folded) return [];
+    function ensureSearchIndex() {
+        var at = catalog.fetchedAt || 0;
+        if (searchIndex && searchIndexTab === tab && searchIndexAt === at) return searchIndex;
+        var list = itemsOfTab();
+        var rows = new Array(list.length);
+        for (var i = 0; i < list.length; i++) {
+            var it = list[i];
+            rows[i] = {
+                it: it,
+                n: foldSearch(it.name),
+                y: it.year != null ? String(it.year) : ""
+            };
+        }
+        searchIndex = rows;
+        searchIndexTab = tab;
+        searchIndexAt = at;
+        return searchIndex;
+    }
+
+    function takeSearch(raw, folded, limit) {
+        var idx = ensureSearchIndex();
+        if (!idx.length || !folded) return [];
         var prefix = [];
         var word = [];
         var rest = [];
-        var seen = {};
-        for (var i = 0; i < list.length; i++) {
-            var it = list[i];
-            var key = Provider.itemKey(it);
-            if (seen[key]) continue;
-            var sc = scoreSearch(it, raw, folded);
-            if (sc < 0) continue;
-            seen[key] = 1;
-            if (sc <= 1) prefix.push(it);
-            else if (sc === 2) word.push(it);
-            else rest.push(it);
+        for (var i = 0; i < idx.length; i++) {
+            var row = idx[i];
+            var sc = -1;
+            if (row.y && row.y === raw) sc = 0;
+            else if (!row.n) continue;
+            else if (row.n.indexOf(folded) === 0) sc = 1;
+            else if (row.n.indexOf(" " + folded) >= 0) sc = 2;
+            else if (folded.length >= 2 && row.n.indexOf(folded) >= 0) sc = 3;
+            else continue;
+            if (sc <= 1) prefix.push(row.it);
+            else if (sc === 2) word.push(row.it);
+            else rest.push(row.it);
             if (prefix.length >= limit) break;
         }
         return prefix.concat(word, rest).slice(0, limit);
@@ -576,8 +609,16 @@ var App = (function () {
     function searchItems() {
         var raw = (searchQuery || "").trim();
         var folded = foldSearch(raw);
-        if (!raw || searchNeedMore()) return [];
-        return takeSearch(itemsOfTab(), raw, folded, isGrid() ? 48 : 60);
+        var key = tab + "|" + folded;
+        if (key === searchItemsKey) return searchItemsCache;
+        if (!raw || searchNeedMore()) {
+            searchItemsKey = key;
+            searchItemsCache = [];
+            return searchItemsCache;
+        }
+        searchItemsCache = takeSearch(raw, folded, isGrid() ? 36 : 40);
+        searchItemsKey = key;
+        return searchItemsCache;
     }
 
     function openSearch() {
@@ -589,16 +630,26 @@ var App = (function () {
         searchFocus = "keys";
         searchKeyIndex = 10;
         searchQuery = "";
+        searchItemsKey = "";
+        lastSearchKeyEl = null;
         itemIndex = 0;
         focusCol = "search";
         menuOpen = false;
+        ensureSearchIndex();
         paintHome(true);
+        syncSearchKeyFocus();
     }
 
     function closeSearch() {
+        if (searchHitTimer) {
+            clearTimeout(searchHitTimer);
+            searchHitTimer = null;
+        }
         searchOpen = false;
         searchFocus = "keys";
         searchQuery = "";
+        searchItemsKey = "";
+        lastSearchKeyEl = null;
         itemIndex = 0;
         focusCol = "search";
         paintHome(true);
@@ -615,8 +666,15 @@ var App = (function () {
             searchQuery += ch;
         }
         itemIndex = 0;
-        paintStage(true);
-        paintCats();
+        searchItemsKey = "";
+        syncSearchChrome();
+        if (searchHitTimer) clearTimeout(searchHitTimer);
+        searchHitTimer = setTimeout(function () {
+            searchHitTimer = null;
+            if (!searchOpen) return;
+            syncSearchHits();
+            syncSearchChrome();
+        }, 50);
     }
 
     function searchKeyLabel(ch) {
@@ -700,27 +758,92 @@ var App = (function () {
         if (itemIndex >= items.length) itemIndex = Math.max(0, items.length - 1);
         var q = searchQuery;
         var html = '<div class="search-box">' +
-            '<div class="search-head' + (searchFocus === "query" ? " is-on" : "") + '">' +
+            '<div id="search-head" class="search-head' + (searchFocus === "query" ? " is-on" : "") + '">' +
             icoSvg("search") +
-            '<div class="search-q' + (q ? "" : " is-ph") + '">' + esc(q || t("searchHint")) + "</div>" +
-            '<div class="search-n">' + (q && !searchNeedMore() ? items.length : "") + "</div></div>" +
-            '<div class="search-hits">' + paintSearchHits(items) + "</div>";
-        if (searchFocus !== "results") html += '<div class="search-osk">' + paintSearchOsk() + "</div>";
-        html += "</div>";
+            '<div id="search-q" class="search-q' + (q ? "" : " is-ph") + '">' + esc(q || t("searchHint")) + "</div>" +
+            '<div id="search-n" class="search-n">' + (q && !searchNeedMore() ? items.length : "") + "</div></div>" +
+            '<div id="search-hits" class="search-hits">' + paintSearchHits(items) + "</div>" +
+            '<div id="search-osk" class="search-osk' + (searchFocus === "results" ? " hidden" : "") + '">' +
+            paintSearchOsk() + "</div></div>";
         return html;
+    }
+
+    function syncSearchChrome() {
+        var qel = $("search-q");
+        var nel = $("search-n");
+        var head = $("search-head");
+        var q = searchQuery;
+        if (qel) {
+            qel.textContent = q || t("searchHint");
+            if (q) remClass(qel, "is-ph");
+            else addClass(qel, "is-ph");
+        }
+        if (nel) nel.textContent = (q && !searchNeedMore() ? String(searchItems().length) : "");
+        if (head) {
+            if (searchFocus === "query") addClass(head, "is-on");
+            else remClass(head, "is-on");
+        }
+    }
+
+    function syncSearchHits() {
+        var hits = $("search-hits");
+        if (!hits) return;
+        var items = searchItems();
+        if (itemIndex >= items.length) itemIndex = Math.max(0, items.length - 1);
+        hits.innerHTML = paintSearchHits(items);
+    }
+
+    function syncSearchKeyFocus() {
+        var osk = $("search-osk");
+        if (!osk) return;
+        if (lastSearchKeyEl) remClass(lastSearchKeyEl, "is-on");
+        if (searchFocus !== "keys") {
+            lastSearchKeyEl = null;
+            return;
+        }
+        var keys = osk.querySelectorAll(".search-key");
+        var el = keys[searchKeyIndex];
+        if (el) addClass(el, "is-on");
+        lastSearchKeyEl = el || null;
+    }
+
+    function syncSearchOskVisible() {
+        var osk = $("search-osk");
+        if (!osk) return;
+        if (searchFocus === "results") addClass(osk, "hidden");
+        else remClass(osk, "hidden");
     }
 
     function focusSearchResults() {
         if (!searchItems().length) return false;
+        if (searchHitTimer) {
+            clearTimeout(searchHitTimer);
+            searchHitTimer = null;
+            syncSearchHits();
+        }
         searchFocus = "results";
         if (itemIndex < 0) itemIndex = 0;
-        paintStage(true);
+        if (!$("stage") || !$("stage").querySelector(".search-box")) {
+            paintStage(true);
+            return true;
+        }
+        syncSearchOskVisible();
+        syncSearchChrome();
+        syncSearchHits();
+        syncSearchKeyFocus();
         return true;
     }
 
     function focusSearchKeys() {
         searchFocus = "keys";
-        paintStage(true);
+        if (!$("stage") || !$("stage").querySelector(".search-box")) {
+            paintStage(true);
+            return;
+        }
+        syncSearchOskVisible();
+        syncSearchChrome();
+        syncSearchHits();
+        syncSearchKeyFocus();
     }
 
     function moveSearchKey(k) {
@@ -747,7 +870,12 @@ var App = (function () {
                 return;
             }
         }
-        paintStage(true);
+        if (searchFocus === "query") {
+            syncSearchChrome();
+            syncSearchKeyFocus();
+            return;
+        }
+        syncSearchKeyFocus();
     }
 
     function handleSearchKey(k) {
@@ -845,7 +973,15 @@ var App = (function () {
             return;
         }
         if (searchOpen) {
+            if (!force && stage.querySelector(".search-box")) {
+                syncSearchHits();
+                syncSearchChrome();
+                syncSearchOskVisible();
+                return;
+            }
+            lastSearchKeyEl = null;
             stage.innerHTML = paintSearch();
+            syncSearchKeyFocus();
             itemWin.start = -1;
             return;
         }
@@ -1841,6 +1977,7 @@ var App = (function () {
         query = "";
         searchOpen = false;
         searchQuery = "";
+        resetSearchIndex();
         invalidateItems();
         var s = Store.settings();
         s.lastTab = tab;
