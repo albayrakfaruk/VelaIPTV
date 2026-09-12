@@ -522,27 +522,69 @@ var App = (function () {
         "z","x","c","v","b","n","m","ü","ş","i",
         "ö","ç","space","back","clear"
     ];
+    function foldSearch(s) {
+        return String(s || "")
+            .replace(/İ/g, "i")
+            .replace(/I/g, "i")
+            .toLowerCase()
+            .replace(/ı/g, "i")
+            .replace(/ğ/g, "g")
+            .replace(/ü/g, "u")
+            .replace(/ş/g, "s")
+            .replace(/ö/g, "o")
+            .replace(/ç/g, "c");
+    }
 
-    function searchItems() {
-        var q = (searchQuery || "").trim().toLowerCase();
-        if (!q) return [];
-        var pool = itemsOfTab();
-        var out = [];
+    function scoreSearch(it, raw, folded) {
+        if (it.year != null && String(it.year) === raw) return 0;
+        var n = foldSearch(it.name);
+        if (!n) return -1;
+        if (n.indexOf(folded) === 0) return 1;
+        if (n.indexOf(" " + folded) >= 0) return 2;
+        if (folded.length >= 2 && n.indexOf(folded) >= 0) return 3;
+        return -1;
+    }
+
+    function takeSearch(list, raw, folded, limit) {
+        if (!list || !list.length || !folded) return [];
+        var prefix = [];
+        var word = [];
+        var rest = [];
         var seen = {};
-        for (var i = 0; i < pool.length; i++) {
-            var it = pool[i];
+        for (var i = 0; i < list.length; i++) {
+            var it = list[i];
             var key = Provider.itemKey(it);
             if (seen[key]) continue;
-            var name = (it.name || "").toLowerCase();
-            if (name.indexOf(q) === -1 && String(it.year || "") !== q) continue;
+            var sc = scoreSearch(it, raw, folded);
+            if (sc < 0) continue;
             seen[key] = 1;
-            out.push(it);
+            if (sc <= 1) prefix.push(it);
+            else if (sc === 2) word.push(it);
+            else rest.push(it);
+            if (prefix.length >= limit) break;
         }
-        return out;
+        return prefix.concat(word, rest).slice(0, limit);
+    }
+
+    function searchNeedMore() {
+        var q = (searchQuery || "").trim();
+        if (!q) return false;
+        if (tab === "live") return q.length < 1;
+        return foldSearch(q).length < 2;
+    }
+
+    function searchItems() {
+        var raw = (searchQuery || "").trim();
+        var folded = foldSearch(raw);
+        if (!raw || searchNeedMore()) return [];
+        return takeSearch(itemsOfTab(), raw, folded, isGrid() ? 48 : 60);
     }
 
     function openSearch() {
-        if (tab === "settings") return;
+        if (tab === "settings") {
+            tab = lastContentTab || "live";
+            menuIndex = sectionIndex(tab);
+        }
         searchOpen = true;
         searchFocus = "keys";
         searchKeyIndex = 10;
@@ -605,6 +647,9 @@ var App = (function () {
         if (!searchQuery.trim()) {
             return '<div class="empty">' + esc(t("searchType")) + "</div>";
         }
+        if (searchNeedMore()) {
+            return '<div class="empty">' + esc(t("searchMin")) + "</div>";
+        }
         if (!items.length) {
             return '<div class="empty">' + esc(t("searchEmpty")) + "</div>";
         }
@@ -634,10 +679,14 @@ var App = (function () {
             html = '<div class="list">';
             for (var i = start; i < end; i++) {
                 var it = items[i];
+                var extra = [];
+                if (it.year) extra.push(it.year);
                 html += '<div class="row' + (focused && i === itemIndex ? " focused" : "") +
                     '" data-i="' + i + '">' +
                     logoTag(it.logo, it.name) +
-                    '<div class="meta"><div class="name">' + esc(it.name) + "</div></div>" +
+                    '<div class="meta"><div class="name">' + esc(it.name) + "</div>" +
+                    (extra.length ? '<div class="search-sub">' + esc(extra.join(" · ")) + "</div>" : "") +
+                    "</div>" +
                     favMark(it) +
                     "</div>";
             }
@@ -654,37 +703,58 @@ var App = (function () {
             '<div class="search-head' + (searchFocus === "query" ? " is-on" : "") + '">' +
             icoSvg("search") +
             '<div class="search-q' + (q ? "" : " is-ph") + '">' + esc(q || t("searchHint")) + "</div>" +
-            '<div class="search-n">' + (q ? items.length : "") + "</div></div>" +
+            '<div class="search-n">' + (q && !searchNeedMore() ? items.length : "") + "</div></div>" +
             '<div class="search-hits">' + paintSearchHits(items) + "</div>";
         if (searchFocus !== "results") html += '<div class="search-osk">' + paintSearchOsk() + "</div>";
         html += "</div>";
         return html;
     }
 
+    function focusSearchResults() {
+        if (!searchItems().length) return false;
+        searchFocus = "results";
+        if (itemIndex < 0) itemIndex = 0;
+        paintStage(true);
+        return true;
+    }
+
+    function focusSearchKeys() {
+        searchFocus = "keys";
+        paintStage(true);
+    }
+
     function moveSearchKey(k) {
         var max = SEARCH_KEYS.length - 1;
         var i = searchKeyIndex;
+        var hasHits = searchItems().length > 0;
         if (k === "left") {
             if (i > 0) searchKeyIndex = i - 1;
         } else if (k === "right") {
             if (i < max) searchKeyIndex = i + 1;
         } else if (k === "up") {
+            if (hasHits) {
+                focusSearchResults();
+                return;
+            }
             if (i < 10) searchFocus = "query";
             else if (i < 40) searchKeyIndex = i - 10;
             else searchKeyIndex = 30 + Math.min(9, (i - 40) * 2);
         } else if (k === "down") {
             if (i < 30) searchKeyIndex = i + 10;
             else if (i < 40) searchKeyIndex = 40 + Math.min(4, Math.floor((i - 30) / 2));
-            else {
-                searchFocus = "results";
-                itemIndex = 0;
+            else if (hasHits) {
+                focusSearchResults();
+                return;
             }
         }
         paintStage(true);
     }
 
     function handleSearchKey(k) {
-        if (k === "yellow") return;
+        if (k === "yellow") {
+            closeSearch();
+            return;
+        }
         if (k === "back") {
             if (searchQuery) {
                 applySearchChar("back");
@@ -700,8 +770,7 @@ var App = (function () {
         }
         if (searchFocus === "query") {
             if (k === "down" || k === "enter") {
-                searchFocus = "keys";
-                paintStage(true);
+                if (!focusSearchResults()) focusSearchKeys();
             }
             return;
         }
@@ -716,18 +785,17 @@ var App = (function () {
         var items = searchItems();
         var cols = CONFIG.GRID_COLS;
         var max = Math.max(0, items.length - 1);
+        var grid = isGrid();
         if (k === "up") {
-            if (isGrid()) {
+            if (grid) {
                 if (itemIndex < cols) {
-                    searchFocus = "keys";
-                    paintStage(true);
+                    focusSearchKeys();
                     return;
                 }
                 itemIndex -= cols;
             } else {
                 if (itemIndex <= 0) {
-                    searchFocus = "keys";
-                    paintStage(true);
+                    focusSearchKeys();
                     return;
                 }
                 itemIndex -= 1;
@@ -736,18 +804,26 @@ var App = (function () {
             return;
         }
         if (k === "down") {
-            if (isGrid()) itemIndex = Math.min(max, itemIndex + cols);
-            else itemIndex = Math.min(max, itemIndex + 1);
+            if (grid) {
+                if (itemIndex + cols > max) {
+                    focusSearchKeys();
+                    return;
+                }
+                itemIndex += cols;
+            } else if (itemIndex >= max) {
+                focusSearchKeys();
+                return;
+            } else itemIndex += 1;
             paintStage(false);
             return;
         }
         if (k === "left") {
-            if (isGrid() && itemIndex % cols !== 0) itemIndex -= 1;
+            if (grid && itemIndex % cols !== 0) itemIndex -= 1;
             paintStage(false);
             return;
         }
         if (k === "right") {
-            if (isGrid()) itemIndex = Math.min(max, itemIndex + 1);
+            if (grid) itemIndex = Math.min(max, itemIndex + 1);
             paintStage(false);
             return;
         }

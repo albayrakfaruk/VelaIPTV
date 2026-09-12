@@ -791,6 +791,12 @@ input:focus {
     flex-shrink: 0;
 }
 
+.search-sub {
+    margin-top: 2px;
+    font-size: 18px;
+    color: #8e8e96;
+}
+
 .search-hits {
     flex: 1;
     min-height: 0;
